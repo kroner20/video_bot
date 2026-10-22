@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Плеер</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root{--bg:var(--tg-theme-bg-color,#fff);--fg:var(--tg-theme-text-color,#111);--hint:var(--tg-theme-hint-color,#888);
+--btn:var(--tg-theme-button-color,#2481cc);--btnfg:var(--tg-theme-button-text-color,#fff);--sec:var(--tg-theme-secondary-bg-color,#f1f1f1)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.4 system-ui,sans-serif}
+nav{display:flex;gap:8px;padding:10px 12px}
+button{border:0;border-radius:10px;padding:10px 14px;font:inherit;background:var(--sec);color:var(--fg)}
+button.on,button.main,.go{background:var(--btn);color:var(--btnfg)}
+form{display:flex;gap:8px;padding:0 12px 10px}
+input{flex:1;min-width:0;border:0;border-radius:10px;padding:10px;font:inherit;background:var(--sec);color:var(--fg)}
+#stage{width:100%;aspect-ratio:16/9;background:#000}
+#stage iframe,#stage video,#stage #yt{width:100%;height:100%;border:0;display:block}
+.note{padding:12px;color:var(--hint)}
+.note button{display:block;margin-top:10px}
+.row{display:flex;align-items:center;gap:10px;padding:10px 12px}
+.t{flex:1;min-width:0}
+.t b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.t .note{padding:0;font-size:14px}
+.bar{height:3px;background:var(--sec);border-radius:2px;margin-top:6px}
+.bar i{display:block;height:100%;background:var(--btn);border-radius:2px}
+.x{background:none;color:var(--hint);font-size:20px;padding:6px 10px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<nav><button id="n1" class="on">Плеер</button><button id="n2">Мои видео</button></nav>
+
+<section id="v1">
+  <form id="f"><input id="u" type="url" placeholder="Ссылка на видео или сайт" required><button class="go">Открыть</button></form>
+  <div id="stage" hidden></div>
+  <div id="info" class="note"></div>
+</section>
+<section id="v2" hidden><div id="list"></div></section>
+
+<script>
+const tg = Telegram.WebApp; tg.ready(); tg.expand();
+const $ = id => document.getElementById(id);
+const div = c => Object.assign(document.createElement('div'), {className: c});
+const note = s => Object.assign(div('note'), {textContent: s});
+const text = s => document.createTextNode(s);
+const api = (p, body) => fetch('/api/' + p, {
+  method: body ? 'POST' : 'GET',
+  headers: {Authorization: 'tma ' + tg.initData, 'Content-Type': 'application/json'},
+  body: body && JSON.stringify(body)
+}).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+
+let cur = null, yt = null, vid = null, vk = null, timer = null, lastSave = 0, ytApi;
+
+const site = () => Object.assign(document.createElement('button'),
+  {className: 'main', textContent: 'Открыть как сайт', onclick: () => tg.openLink(cur.url)});
+
+function tab(n) {
+  $('v1').hidden = n !== 1; $('v2').hidden = n !== 2;
+  $('n1').classList.toggle('on', n === 1); $('n2').classList.toggle('on', n === 2);
+  if (n === 2) loadLib();
+}
+$('n1').onclick = () => tab(1);
+$('n2').onclick = () => tab(2);
+
+// ---- запоминаем место просмотра (не чаще раза в 5 секунд) ----
+function save(pos, dur, force) {
+  if (!cur || !isFinite(pos)) return;
+  const now = Date.now();
+  if (!force && now - lastSave < 5000) return;
+  lastSave = now;
+  api('progress', {url: cur.url, pos, dur: isFinite(dur) ? dur : 0}).catch(() => {});
+}
+function flush() {
+  if (yt && yt.getCurrentTime) save(yt.getCurrentTime(), yt.getDuration(), true);
+  if (vid) save(vid.currentTime, vid.duration, true);
+  if (vk) save(vk.getCurrentTime(), vk.getDuration(), true);
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
+
+function stop() {
+  flush(); clearInterval(timer);
+  if (yt && yt.destroy) try { yt.destroy(); } catch {}
+  if (vk) try { vk.destroy(); } catch {}
+  yt = vid = vk = null; $('stage').replaceChildren();
+}
+const loadYT = () => ytApi ||= new Promise(res => {
+  window.onYouTubeIframeAPIReady = res;
+  document.head.append(Object.assign(document.createElement('script'), {src: 'https://www.youtube.com/iframe_api'}));
+});
+
+// ---- открыть ссылку ----
+async function openUrl(url) {
+  tab(1); $('u').value = url; stop();
+  const st = $('stage'), info = $('info');
+  st.hidden = true; info.textContent = 'Загружаю…';
+  try { cur = await api('open', {url}); }
+  catch { cur = null; info.textContent = 'Не удалось открыть ссылку. Проверь адрес.'; return; }
+  const r = cur; info.replaceChildren();
+
+  if (r.kind === 'link') {
+    info.append(text('Этот сайт не разрешает встраивание, поэтому его можно открыть только как страницу. Ссылка сохранена.'), site());
+    return;
+  }
+  st.hidden = false;
+
+  if (r.kind === 'youtube') {
+    st.append(Object.assign(document.createElement('div'), {id: 'yt'}));
+    await loadYT();
+    yt = new YT.Player('yt', {
+      videoId: r.id, playerVars: {playsinline: 1, start: Math.floor(r.pos)},
+      events: {
+        onStateChange: e => { if (e.data === 2) save(yt.getCurrentTime(), yt.getDuration(), true); },
+        onError: () => { st.hidden = true; info.append(text('YouTube не даёт встроить это видео.'), site()); }
+      }
+    });
+    timer = setInterval(() => {
+      if (yt && yt.getPlayerState && yt.getPlayerState() === 1) save(yt.getCurrentTime(), yt.getDuration());
+    }, 5000);
+
+  } else if (r.kind === 'video') {
+    vid = document.createElement('video'); vid.controls = true; vid.playsInline = true; st.append(vid);
+    if (/\.m3u8/i.test(r.url) && !vid.canPlayType('application/vnd.apple.mpegurl')) {
+      await new Promise(ok => document.head.append(Object.assign(document.createElement('script'),
+        {src: 'https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js', onload: ok})));
+      const h = new Hls(); h.loadSource(r.url); h.attachMedia(vid);
+    } else vid.src = r.url;
+    vid.addEventListener('loadedmetadata', () => { if (r.pos) vid.currentTime = r.pos; }, {once: true});
+    vid.addEventListener('timeupdate', () => save(vid.currentTime, vid.duration));
+    vid.addEventListener('pause', () => save(vid.currentTime, vid.duration, true));
+
+  } else if (r.kind === 'vk') {
+    const t = Math.floor(r.pos);
+    const src = r.src + (t > 5 ? `&t=${Math.floor(t / 3600)}h${Math.floor(t % 3600 / 60)}m${t % 60}s` : '');
+    const f = Object.assign(document.createElement('iframe'),
+      {src, allowFullscreen: true, allow: 'autoplay; encrypted-media; fullscreen; picture-in-picture'});
+    st.append(f);
+    if (!(window.VK && VK.VideoPlayer)) {
+      await new Promise(ok => document.head.append(Object.assign(document.createElement('script'),
+        {src: 'https://vk.ru/js/api/videoplayer.js', onload: ok, onerror: ok})));
+    }
+    if (window.VK && VK.VideoPlayer) {
+      vk = VK.VideoPlayer(f);
+      vk.on('timeupdate', s => save(s.time, s.duration));
+      vk.on('paused', s => save(s.time, s.duration, true));
+    }
+    info.append(text('Если видео не открывается, возможно, автор закрыл его. Тогда пришли боту код «Экспортировать» целиком или '), site());
+
+  } else {
+    st.append(Object.assign(document.createElement('iframe'),
+      {src: r.src, allowFullscreen: true, allow: 'autoplay; fullscreen; picture-in-picture'}));
+    info.append(text('Для этого источника место просмотра не запоминается, но ссылка сохранена. Если не грузится, '), site());
+  }
+}
+$('f').onsubmit = e => { e.preventDefault(); openUrl($('u').value.trim()); };
+
+// ---- список сохранённого ----
+const fmt = s => {
+  s = Math.floor(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+  return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0');
+};
+async function loadLib() {
+  const box = $('list'); box.replaceChildren();
+  let items;
+  try { items = await api('library'); } catch { box.append(note('Не удалось загрузить список.')); return; }
+  if (!items.length) { box.append(note('Пока пусто. Открой ссылку во вкладке «Плеер», и она появится здесь.')); return; }
+  for (const it of items) {
+    const row = div('row'), t = div('t'), b = document.createElement('b'), sub = div('note');
+    b.textContent = it.title || it.url;
+    let host = it.url; try { host = new URL(it.url).hostname; } catch {}
+    sub.textContent = host + (it.pos > 5 ? ', остановился на ' + fmt(it.pos) : '');
+    t.append(b, sub);
+    if (it.dur > 0) {
+      const bar = div('bar'), i = document.createElement('i');
+      i.style.width = Math.min(100, it.pos / it.dur * 100) + '%'; bar.append(i); t.append(bar);
+    }
+    const x = Object.assign(document.createElement('button'), {className: 'x', textContent: '✕', title: 'Удалить'});
+    x.onclick = e => { e.stopPropagation(); api('delete', {url: it.url}).then(loadLib); };
+    row.append(t, x); row.onclick = () => openUrl(it.url); box.append(row);
+  }
+}
+
+const q = new URLSearchParams(location.search).get('u');
+if (q) openUrl(q); else api('library').then(l => l.length && tab(2)).catch(() => {});
+</script>
+</body>
+</html>
