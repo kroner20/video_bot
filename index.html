@@ -45,7 +45,9 @@ const $ = id => document.getElementById(id);
 const div = c => Object.assign(document.createElement('div'), {className: c});
 const note = s => Object.assign(div('note'), {textContent: s});
 const text = s => document.createTextNode(s);
-const api = (p, body) => fetch('/api/' + p, {
+// Адрес сервера с ботом. Нужен, когда страница лежит на GitHub Pages; на самом сервере остаётся пустым.
+const API = location.hostname.endsWith('github.io') ? 'https://api.твой-домен.ru' : '';
+const api = (p, body) => fetch(API + '/api/' + p, {
   method: body ? 'POST' : 'GET',
   headers: {Authorization: 'tma ' + tg.initData, 'Content-Type': 'application/json'},
   body: body && JSON.stringify(body)
