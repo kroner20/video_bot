@@ -26,11 +26,14 @@ input{flex:1;min-width:0;border:0;border-radius:10px;padding:10px;font:inherit;b
 .bar{height:3px;background:var(--sec);border-radius:2px;margin-top:6px}
 .bar i{display:block;height:100%;background:var(--btn);border-radius:2px}
 .x{background:none;color:var(--hint);font-size:20px;padding:6px 10px}
+#stage.fs{position:fixed;inset:0;z-index:50;width:100%;height:100%;aspect-ratio:auto}
+#fsx{position:fixed;top:calc(var(--tg-safe-area-inset-top,0px) + var(--tg-content-safe-area-inset-top,0px) + 8px);left:8px;z-index:60;background:rgba(0,0,0,.55);color:#fff;border-radius:50%;width:40px;height:40px;padding:0;font-size:20px}
 [hidden]{display:none!important}
 </style>
 </head>
 <body>
-<nav><button id="n1" class="on">Плеер</button><button id="n2">Мои видео</button></nav>
+<nav><button id="n1" class="on">Плеер</button><button id="n2">Мои видео</button><button id="fs" hidden style="margin-left:auto" title="Во весь экран">⛶</button></nav>
+<button id="fsx" hidden title="Выйти из полного экрана">✕</button>
 
 <section id="v1">
   <form id="f"><input id="u" type="url" placeholder="Ссылка на видео или сайт" required><button class="go">Открыть</button></form>
@@ -53,7 +56,21 @@ const api = (p, body) => fetch(API + '/api/' + p, {
   body: body && JSON.stringify(body)
 }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
 
-let cur = null, yt = null, vid = null, vk = null, timer = null, lastSave = 0, ytApi;
+let cur = null, yt = null, vid = null, vk = null, timer = null, lastSave = 0, ytApi, isFs = false;
+
+// ---- свой полноэкранный режим ----
+function setFs(on) {
+  isFs = on;
+  $('stage').classList.toggle('fs', on);
+  $('fsx').hidden = !on;
+  document.body.style.overflow = on ? 'hidden' : '';
+  try { if (tg.isVersionAtLeast('8.0')) on ? tg.requestFullscreen() : tg.exitFullscreen(); } catch {}
+  try { on ? tg.BackButton.show() : tg.BackButton.hide(); } catch {}
+}
+$('fs').onclick = () => setFs(!isFs);
+$('fsx').onclick = () => setFs(false);
+try { tg.BackButton.onClick(() => setFs(false)); } catch {}
+try { tg.onEvent('fullscreenChanged', () => { if (isFs && !tg.isFullscreen) setFs(false); }); } catch {}
 
 const site = () => Object.assign(document.createElement('button'),
   {className: 'main', textContent: 'Открыть как сайт', onclick: () => tg.openLink(cur.url)});
@@ -82,6 +99,7 @@ function flush() {
 document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
 
 function stop() {
+  if (isFs) setFs(false);
   flush(); clearInterval(timer);
   if (yt && yt.destroy) try { yt.destroy(); } catch {}
   if (vk) try { vk.destroy(); } catch {}
@@ -96,7 +114,7 @@ const loadYT = () => ytApi ||= new Promise(res => {
 async function openUrl(url) {
   tab(1); $('u').value = url; stop();
   const st = $('stage'), info = $('info');
-  st.hidden = true; info.textContent = 'Загружаю…';
+  st.hidden = true; $('fs').hidden = true; info.textContent = 'Загружаю…';
   try { cur = await api('open', {url}); }
   catch { cur = null; info.textContent = 'Не удалось открыть ссылку. Проверь адрес.'; return; }
   const r = cur; info.replaceChildren();
@@ -105,7 +123,7 @@ async function openUrl(url) {
     info.append(text('Этот сайт не разрешает встраивание, поэтому его можно открыть только как страницу. Ссылка сохранена.'), site());
     return;
   }
-  st.hidden = false;
+  st.hidden = false; $('fs').hidden = false;
 
   if (r.kind === 'youtube') {
     st.append(Object.assign(document.createElement('div'), {id: 'yt'}));
