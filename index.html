@@ -46,7 +46,7 @@ const div = c => Object.assign(document.createElement('div'), {className: c});
 const note = s => Object.assign(div('note'), {textContent: s});
 const text = s => document.createTextNode(s);
 // Адрес сервера с ботом. Нужен, когда страница лежит на GitHub Pages; на самом сервере остаётся пустым.
-const API = location.hostname.endsWith('github.io') ? 'https://api.твой-домен.ru' : '';
+const API = location.hostname.endsWith('github.io') ? 'https://videobot1122.duckdns.org:8443' : '';
 const api = (p, body) => fetch(API + '/api/' + p, {
   method: body ? 'POST' : 'GET',
   headers: {Authorization: 'tma ' + tg.initData, 'Content-Type': 'application/json'},
